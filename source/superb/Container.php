@@ -2,15 +2,19 @@
 
 namespace Superb;
 
+use ArrayAccess;
+use Closure;
 use ReflectionClass;
 use ReflectionMethod;
 use ReflectionFunction;
 use ReflectionParameter;
-use Superb\Middlewares\Route\AuthenticateMiddleware;
 use Superb\Routing\Router;
 use Superb\ServiceProvider\ServiceProvider;
+use Superb\Middlewares\Route\AuthenticateMiddleware;
+use Superb\ORM\Database\Connection\ConnectionFactory;
+use Superb\ORM\Database\DatabaseManager;
 
-class Container
+class Container implements ArrayAccess
 {
     // private $buildStack = [];
 
@@ -63,10 +67,22 @@ class Container
         ]);
     }
 
+    public function getBindings()
+    {
+        return $this->bindings;
+    }
+
     private function registerProviders()
     {
         $provider = new ServiceProvider();
         $this->provider = $provider->provider;
+
+        $this->bind("dbFactory", function ($app) {
+            return new ConnectionFactory($app);
+        });
+        $this->bind("db", function ($app) {
+            return new DatabaseManager($app, $this->make("dbFactory"));
+        });
     }
 
     private function registerRouter()
@@ -77,12 +93,18 @@ class Container
     }
 
 
-    public function build(string $concrete)
+    public function build($concrete)
     {
+        //Closureがsetされている場合
+        if ($concrete instanceof Closure) {
+            return $concrete($this);
+        }
+
         //すでにsingletonsにObjectがあるならそれを返す
         if (isset($this->singletons[$concrete])) {
             return $this->singletons[$concrete];
         }
+
 
 
         $reflector = new ReflectionClass($concrete);
@@ -227,5 +249,27 @@ class Container
             return $this->bindings[$abstract];
         }
         return $abstract;
+    }
+
+    public function offsetExists($key)
+    {
+        return isset($this->bindings[$key]) || isset($this->singletons[$key]);
+    }
+
+    public function offsetGet($key)
+    {
+        return $this->make($key);
+    }
+
+    public function offsetSet($key, $value)
+    {
+        $this->bind($key, $value instanceof Closure ? $value : function () use ($value) {
+            return $value;
+        });
+    }
+
+    public function offsetUnset($key)
+    {
+        unset($this->bindings[$key], $this->singletons[$key]);
     }
 }
